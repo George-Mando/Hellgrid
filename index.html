@@ -2,213 +2,619 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Feather 3D Ultra</title>
+<title>HellGrid</title>
 <style>
-body { margin:0; background:black; overflow:hidden; }
-canvas { display:block; margin:auto; }
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center;height:100vh}
+canvas{display:block}
+#overlay{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
+#hud{
+  position:absolute;bottom:18px;left:50%;transform:translateX(-50%);
+  display:flex;gap:24px;
+  font-family:'Share Tech Mono',monospace;font-size:13px;letter-spacing:2px;
+  pointer-events:none;
+}
+.hud-box{
+  background:rgba(0,0,0,0.75);border:1px solid rgba(255,60,20,0.5);
+  padding:6px 14px;border-radius:3px;
+  display:flex;align-items:center;gap:8px;
+}
+.hud-label{color:rgba(255,80,30,0.6);font-size:10px;letter-spacing:3px}
+.hud-val{color:#ff6633;font-size:16px;font-weight:bold;text-shadow:0 0 8px #ff3300}
+.hud-bar{width:80px;height:6px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden}
+.hud-fill{height:100%;border-radius:2px;transition:width 0.1s}
+#bar-hp{background:linear-gradient(90deg,#cc1100,#ff4422)}
+#bar-ammo{background:linear-gradient(90deg,#776600,#ffcc00)}
+#splash{
+  position:absolute;inset:0;background:#000;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  font-family:'Share Tech Mono',monospace;color:#ff4422;z-index:10;cursor:pointer;
+}
+#splash h1{
+  font-size:72px;letter-spacing:16px;margin:0 0 4px;
+  text-shadow:0 0 30px #ff2200,0 0 60px #880000;
+}
+#splash .sub{font-size:11px;letter-spacing:5px;color:#551100;margin-bottom:50px}
+#splash .controls{
+  font-size:11px;letter-spacing:2px;color:#441100;
+  line-height:2;text-align:center;margin-bottom:40px;
+}
+#splash .prompt{font-size:12px;letter-spacing:4px;color:#ff3300;animation:blink 1s step-end infinite;text-shadow:0 0 8px #ff2200}
+@keyframes blink{50%{opacity:0}}
+#killfeed{position:absolute;top:16px;right:16px;font-family:'Share Tech Mono',monospace;font-size:11px;letter-spacing:1px;pointer-events:none}
+.kf{color:#ff4422;opacity:1;transition:opacity 2s}
 </style>
 </head>
 <body>
-
 <canvas id="game"></canvas>
+<div id="overlay">
+  <div id="hud">
+    <div class="hud-box">
+      <div>
+        <div class="hud-label">HEALTH</div>
+        <div class="hud-bar"><div class="hud-fill" id="bar-hp" style="width:100%"></div></div>
+      </div>
+      <div class="hud-val" id="val-hp">100</div>
+    </div>
+    <div class="hud-box">
+      <div>
+        <div class="hud-label">AMMO</div>
+        <div class="hud-bar"><div class="hud-fill" id="bar-ammo" style="width:100%"></div></div>
+      </div>
+      <div class="hud-val" id="val-ammo">20</div>
+    </div>
+  </div>
+  <div id="killfeed"></div>
+</div>
+
+<div id="splash">
+  <h1>HELLGRID</h1>
+  <div class="sub">RAYCASTER ENGINE v1.0</div>
+  <div class="controls">
+    WASD — MOVE &nbsp;|&nbsp; SPACE — FIRE<br>
+    MOUSE CLICK — ALSO FIRE
+  </div>
+  <div class="prompt">[ CLICK TO ENTER ]</div>
+</div>
 
 <script>
-const c = document.getElementById("game");
-const ctx = c.getContext("2d");
+const c=document.getElementById("game");
+const ctx=c.getContext("2d");
+c.width=900; c.height=500;
+const W=c.width,H=c.height;
+const FOV=Math.PI/3;
+const HALF=H/2;
 
-c.width = 900;
-c.height = 450;
+// ── TEXTURES ─────────────────────────────────────────────
+// Generate procedural brick texture into offscreen canvas
+const TEX_SIZE=64;
+const brickTex=document.createElement("canvas");
+brickTex.width=TEX_SIZE; brickTex.height=TEX_SIZE;
+const btx=brickTex.getContext("2d");
+function buildBrickTex(){
+  const bw=32,bh=16;
+  for(let row=0;row<TEX_SIZE/bh;row++){
+    for(let col=0;col<TEX_SIZE/bw+1;col++){
+      let ox=(row%2===0)?0:bw/2;
+      let x=col*bw-ox, y=row*bh;
+      // Brick base — dark stone
+      let brightness=55+Math.random()*20;
+      btx.fillStyle=`rgb(${brightness+15},${Math.floor(brightness*0.2)},${Math.floor(brightness*0.1)})`;
+      btx.fillRect(x+1,y+1,bw-2,bh-2);
+      // Mortar
+      btx.fillStyle="rgb(18,6,4)";
+      btx.fillRect(x,y,bw,1);
+      btx.fillRect(x,y,1,bh);
+      // Highlight edge
+      btx.fillStyle="rgba(255,120,60,0.08)";
+      btx.fillRect(x+1,y+1,bw-2,2);
+    }
+  }
+}
+buildBrickTex();
+const brickPixels=btx.getImageData(0,0,TEX_SIZE,TEX_SIZE).data;
 
-const W = c.width;
-const H = c.height;
-const FOV = Math.PI / 3;
+// Floor texture
+const floorTex=document.createElement("canvas");
+floorTex.width=TEX_SIZE; floorTex.height=TEX_SIZE;
+const ftx=floorTex.getContext("2d");
+function buildFloorTex(){
+  for(let y=0;y<TEX_SIZE;y++){
+    for(let x=0;x<TEX_SIZE;x++){
+      let v=12+Math.random()*10;
+      ftx.fillStyle=`rgb(${Math.floor(v*1.1)},${Math.floor(v*0.4)},${Math.floor(v*0.3)})`;
+      ftx.fillRect(x,y,1,1);
+    }
+  }
+  // crack lines
+  ftx.strokeStyle="rgba(0,0,0,0.4)"; ftx.lineWidth=1;
+  ftx.beginPath(); ftx.moveTo(0,20); ftx.lineTo(30,40); ftx.lineTo(60,35); ftx.stroke();
+  ftx.beginPath(); ftx.moveTo(40,0); ftx.lineTo(55,64); ftx.stroke();
+}
+buildFloorTex();
+const floorPixels=ftx.getImageData(0,0,TEX_SIZE,TEX_SIZE).data;
 
-ctx.imageSmoothingEnabled = false;
+// ── MAP ──────────────────────────────────────────────────
+const map=[
+[1,1,1,1,1,1,1,1,1],
+[1,0,0,0,0,0,0,0,1],
+[1,0,1,1,0,1,0,0,1],
+[1,0,1,0,0,0,0,0,1],
+[1,0,0,0,1,0,1,0,1],
+[1,0,0,0,0,0,1,0,1],
+[1,0,1,0,0,0,0,0,1],
+[1,0,0,0,0,0,0,0,1],
+[1,1,1,1,1,1,1,1,1]
+];
+const MW=map[0].length, MH=map.length;
 
-// ───────── TEXTURE ─────────
-const tex = new Image();
-tex.src = "https://i.imgur.com/8bKQ7oP.png";
+// ── PLAYER ───────────────────────────────────────────────
+let p={x:1.5,y:1.5,a:0.4,health:100,ammo:20,hurt:0,score:0};
 
-// ───────── MAP ─────────
-const map = [
- [1,1,1,1,1,1,1],
- [1,0,0,0,0,0,1],
- [1,0,1,0,1,0,1],
- [1,0,0,0,0,0,1],
- [1,1,1,1,1,1,1]
+// ── ENEMIES ──────────────────────────────────────────────
+let enemies=[
+  {x:7,y:2,alive:true,timer:0,hp:3},
+  {x:2,y:6,alive:true,timer:0,hp:3},
+  {x:7,y:6,alive:true,timer:0,hp:3},
+  {x:4,y:4,alive:true,timer:0,hp:3}
 ];
 
-// ───────── PLAYER ─────────
-let p = {x:3,y:3,a:0};
-let enemies = [{x:5,y:2,alive:true}];
+// ── PARTICLES ────────────────────────────────────────────
+let particles=[];
+function spawnParticles(wx,wy){
+  for(let i=0;i<12;i++){
+    particles.push({
+      x:wx,y:wy,
+      vx:(Math.random()-0.5)*0.12,
+      vy:(Math.random()-0.5)*0.12,
+      life:1,decay:0.04+Math.random()*0.03
+    });
+  }
+}
 
-let keys = {};
+// ── MUZZLE FLASH ─────────────────────────────────────────
+let muzzleFlash=0;
 
-// INPUT
-onkeydown = e => {
-  keys[e.key.toLowerCase()] = true;
-  if(e.key === " ") shoot();
+// ── INPUT ─────────────────────────────────────────────────
+let keys={};
+onkeydown=e=>{keys[e.key.toLowerCase()]=true; if(e.key===" "){e.preventDefault();shoot();}};
+onkeyup=e=>keys[e.key.toLowerCase()]=false;
+c.addEventListener("click",shoot);
+
+// ── AUDIO ─────────────────────────────────────────────────
+let shootSound,hitSound,ambient;
+const splash=document.getElementById("splash");
+splash.onclick=()=>{
+  splash.style.display="none";
+  shootSound=new Audio("https://actions.google.com/sounds/v1/weapons/medium_gunshot.ogg");
+  hitSound=new Audio("https://actions.google.com/sounds/v1/cartoon/clang.ogg");
+  ambient=new Audio("https://actions.google.com/sounds/v1/ambiences/warehouse.ogg");
+  ambient.loop=true; ambient.volume=0.25; ambient.play();
 };
-onkeyup = e => keys[e.key.toLowerCase()] = false;
 
-// ───────── MOVE ─────────
-function move(){
-  if(keys["a"]) p.a -= 0.05;
-  if(keys["d"]) p.a += 0.05;
-
-  let s = 0;
-  if(keys["w"]) s = 0.08;
-  if(keys["s"]) s = -0.08;
-
-  let nx = p.x + Math.cos(p.a)*s;
-  let ny = p.y + Math.sin(p.a)*s;
-
-  if(map[Math.floor(ny)][Math.floor(nx)] === 0){
-    p.x = nx; p.y = ny;
-  }
+// ── MOVEMENT ──────────────────────────────────────────────
+function updatePlayer(){
+  if(keys["a"])p.a-=0.045;
+  if(keys["d"])p.a+=0.045;
+  let s=0;
+  if(keys["w"])s=0.07;
+  if(keys["s"])s=-0.07;
+  let nx=p.x+Math.cos(p.a)*s;
+  let ny=p.y+Math.sin(p.a)*s;
+  if(map[Math.floor(ny)]&&map[Math.floor(ny)][Math.floor(nx)]===0){p.x=nx;p.y=ny;}
+  else if(map[Math.floor(p.y)]&&map[Math.floor(p.y)][Math.floor(nx)]===0){p.x=nx;}
+  else if(map[Math.floor(ny)]&&map[Math.floor(ny)][Math.floor(p.x)]===0){p.y=ny;}
 }
 
-// ───────── RAYCAST ─────────
-function cast(angle){
-  let x = p.x;
-  let y = p.y;
-  let d = 0;
+// ── DDA RAYCASTER (fast + accurate) ───────────────────────
+function castRay(angle){
+  let rx=Math.cos(angle), ry=Math.sin(angle);
+  let mx=Math.floor(p.x), my=Math.floor(p.y);
+  let ddx=Math.abs(1/rx), ddy=Math.abs(1/ry);
+  let sx,sy,sdx,sdy;
+  if(rx<0){sx=-1;sdx=(p.x-mx)*ddx;}else{sx=1;sdx=(mx+1-p.x)*ddx;}
+  if(ry<0){sy=-1;sdy=(p.y-my)*ddy;}else{sy=1;sdy=(my+1-p.y)*ddy;}
+  let hit=false,side=0,dist=0;
+  for(let i=0;i<64;i++){
+    if(sdx<sdy){sdx+=ddx;mx+=sx;side=0;}
+    else{sdy+=ddy;my+=sy;side=1;}
+    if(map[my]&&map[my][mx]===1){hit=true;break;}
+  }
+  if(!hit)return{dist:100,side:0,wallX:0};
+  if(side===0)dist=sdx-ddx;else dist=sdy-ddy;
+  let wallX;
+  if(side===0)wallX=p.y+dist*ry;else wallX=p.x+dist*rx;
+  wallX-=Math.floor(wallX);
+  return{dist,side,wallX};
+}
 
-  while(d < 20){
-    x += Math.cos(angle)*0.02;
-    y += Math.sin(angle)*0.02;
-    d += 0.02;
+// ── ZBUFFER ───────────────────────────────────────────────
+const zBuffer=new Float32Array(W);
 
-    if(map[Math.floor(y)][Math.floor(x)] === 1){
-      return {d, x, y};
+// ── IMAGEDATA for pixel-level rendering ───────────────────
+const imgData=ctx.createImageData(W,H);
+const pixels=imgData.data;
+function setPixel(x,y,r,g,b){
+  let i=(y*W+x)*4;
+  pixels[i]=r; pixels[i+1]=g; pixels[i+2]=b; pixels[i+3]=255;
+}
+
+// ── DRAW SCENE ────────────────────────────────────────────
+function drawScene(){
+  // Ceiling gradient (pixel by pixel for atmospheric fog)
+  for(let y=0;y<HALF;y++){
+    let t=y/HALF;
+    // Dark blood-red ceiling, brighter near horizon
+    let r=Math.floor(4+t*28);
+    let g=Math.floor(0+t*4);
+    let b=Math.floor(0+t*3);
+    for(let x=0;x<W;x++) setPixel(x,y,r,g,b);
+  }
+
+  // Floor with texture + distance shading
+  for(let y=HALF;y<H;y++){
+    let rowDist=HALF/(y-HALF+0.001);
+    let floorStepX=rowDist*(Math.cos(p.a-FOV/2)-Math.cos(p.a+FOV/2))/W;
+    let floorStepY=rowDist*(Math.sin(p.a-FOV/2)-Math.sin(p.a+FOV/2))/W;
+    let fx=p.x+rowDist*Math.cos(p.a-FOV/2);
+    let fy=p.y+rowDist*Math.sin(p.a-FOV/2);
+    let fog=Math.min(1,(y-HALF)/(H-HALF));
+    for(let x=0;x<W;x++){
+      let tx=Math.floor(fx*TEX_SIZE)&(TEX_SIZE-1);
+      let ty=Math.floor(fy*TEX_SIZE)&(TEX_SIZE-1);
+      let pi=(ty*TEX_SIZE+tx)*4;
+      let shade=0.15+fog*0.5;
+      setPixel(x,y,
+        Math.floor(floorPixels[pi]*shade),
+        Math.floor(floorPixels[pi+1]*shade),
+        Math.floor(floorPixels[pi+2]*shade)
+      );
+      fx+=floorStepX; fy+=floorStepY;
     }
   }
-  return {d:20, x, y};
-}
 
-// ───────── DRAW ─────────
-function draw(){
-
-  // SKY
-  ctx.fillStyle="#6ab4f5";
-  ctx.fillRect(0,0,W,H/2);
-
-  // FLOOR (fade)
-  let grad = ctx.createLinearGradient(0,H/2,0,H);
-  grad.addColorStop(0,"#333");
-  grad.addColorStop(1,"#111");
-  ctx.fillStyle=grad;
-  ctx.fillRect(0,H/2,W,H/2);
-
+  // Walls with DDA + texture
   for(let x=0;x<W;x++){
-    let a = p.a - FOV/2 + x/W*FOV;
+    let angle=p.a-FOV/2+x/W*FOV;
+    let{dist,side,wallX}=castRay(angle);
+    let corrDist=dist*Math.cos(angle-p.a);
+    zBuffer[x]=corrDist;
 
-    let ray = cast(a);
+    let wallH=Math.floor(H/corrDist);
+    let top=Math.max(0,HALF-wallH/2);
+    let bot=Math.min(H-1,HALF+wallH/2);
 
-    let dist = ray.d * Math.cos(a - p.a);
-    let h = 320 / dist;
+    // Texture column
+    let tx=Math.floor(wallX*TEX_SIZE);
+    if(tx<0)tx=0; if(tx>=TEX_SIZE)tx=TEX_SIZE-1;
 
-    // texture X
-    let tx = Math.floor((ray.x % 1) * tex.width);
+    // Distance fog + side darkening
+    let fog=Math.min(1,corrDist/8);
+    let sideDim=side===1?0.65:1.0;
 
-    ctx.drawImage(
-      tex,
-      tx,0,1,tex.height,
-      x,
-      H/2 - h/2,
-      1,
-      h
-    );
-
-    // fog
-    let fog = Math.min(1, dist/6);
-    ctx.fillStyle=`rgba(0,0,0,${fog})`;
-    ctx.fillRect(x, H/2-h/2, 1, h);
+    for(let y=top;y<bot;y++){
+      let ty=Math.floor(((y-top)/(bot-top))*TEX_SIZE);
+      let pi=(ty*TEX_SIZE+tx)*4;
+      let shade=(1-fog)*sideDim;
+      setPixel(x,y,
+        Math.floor(brickPixels[pi]*shade),
+        Math.floor(brickPixels[pi+1]*shade),
+        Math.floor(brickPixels[pi+2]*shade)
+      );
+    }
   }
+
+  ctx.putImageData(imgData,0,0);
 }
 
-// ───────── ENEMIES ─────────
-function drawEnemies(){
+// ── ENEMY AI ─────────────────────────────────────────────
+function updateEnemies(){
   enemies.forEach(e=>{
-    if(!e.alive) return;
-
-    let dx=e.x-p.x;
-    let dy=e.y-p.y;
-
+    if(!e.alive)return;
+    e.timer++;
+    let dx=p.x-e.x,dy=p.y-e.y;
     let dist=Math.hypot(dx,dy);
-    let ang=Math.atan2(dy,dx)-p.a;
+    if(dist<5&&dist>0.8){
+      let speed=0.008;
+      let nx=e.x+dx/dist*speed;
+      let ny=e.y+dy/dist*speed;
+      if(map[Math.floor(ny)]&&map[Math.floor(ny)][Math.floor(nx)]===0){e.x=nx;e.y=ny;}
+    }
+    if(dist<0.9&&e.timer%40===0){p.health=Math.max(0,p.health-8);p.hurt=15;}
+  });
+  // Update particles
+  particles=particles.filter(pt=>{
+    pt.x+=pt.vx; pt.y+=pt.vy;
+    pt.life-=pt.decay;
+    return pt.life>0;
+  });
+  if(muzzleFlash>0)muzzleFlash--;
+}
 
-    while(ang<-Math.PI) ang+=Math.PI*2;
-    while(ang>Math.PI) ang-=Math.PI*2;
+// ── DRAW ENEMIES (sprite) ────────────────────────────────
+function drawEnemies(){
+  // Sort by distance (far to near)
+  let sorted=enemies.filter(e=>e.alive).map(e=>{
+    let dx=e.x-p.x,dy=e.y-p.y;
+    return{...e,dist:Math.hypot(dx,dy),dx,dy};
+  }).sort((a,b)=>b.dist-a.dist);
 
-    if(Math.abs(ang)>FOV/2) return;
+  sorted.forEach(e=>{
+    let ang=Math.atan2(e.dy,e.dx)-p.a;
+    // Normalize angle
+    while(ang<-Math.PI)ang+=2*Math.PI;
+    while(ang>Math.PI)ang-=2*Math.PI;
+    if(Math.abs(ang)>FOV/2+0.1)return;
 
-    let size=200/dist;
     let sx=(ang+FOV/2)/FOV*W;
+    let sprH=Math.min(H,Math.floor(H/e.dist));
+    let sprW=sprH;
+    let sy=HALF-sprH/2;
 
-    ctx.fillStyle="#00ffff";
-    ctx.fillRect(sx-size/2,H/2-size/2,size,size);
+    let startX=Math.floor(sx-sprW/2);
+    let endX=Math.floor(sx+sprW/2);
 
-    ctx.fillStyle="white";
-    ctx.fillRect(sx-6,H/2-10,4,4);
-    ctx.fillRect(sx+4,H/2-10,4,4);
+    for(let x=startX;x<endX;x++){
+      if(x<0||x>=W)continue;
+      if(zBuffer[x]<e.dist)continue; // occluded by wall
+
+      let tx=Math.floor((x-startX)/sprW*64);
+      for(let y=Math.max(0,sy);y<Math.min(H,sy+sprH);y++){
+        let ty=Math.floor((y-sy)/sprH*64);
+        // Draw demon figure procedurally from tx/ty
+        drawDemonPixel(x,y,tx,ty,e.dist,e.timer);
+      }
+    }
+
+    // Particles for this enemy
+    particles.forEach(pt=>{
+      let dx2=pt.x-p.x,dy2=pt.y-p.y;
+      let pDist=Math.hypot(dx2,dy2);
+      let pAng=Math.atan2(dy2,dx2)-p.a;
+      while(pAng<-Math.PI)pAng+=2*Math.PI;
+      while(pAng>Math.PI)pAng-=2*Math.PI;
+      if(Math.abs(pAng)>FOV/2)return;
+      let px2=Math.floor((pAng+FOV/2)/FOV*W);
+      let size=Math.max(1,Math.floor(4/pDist));
+      let alpha=pt.life;
+      ctx.fillStyle=`rgba(255,${Math.floor(150*pt.life)},0,${alpha})`;
+      ctx.fillRect(px2-size,HALF-size,size*2,size*2);
+    });
   });
 }
 
-// ───────── SHOOT ─────────
+function drawDemonPixel(sx,sy,tx,ty,dist,timer){
+  // Build a pixel-art demon in 64x64 space
+  // Body shape
+  let inBody=tx>16&&tx<48&&ty>20&&ty<58;
+  let inHead=tx>18&&tx<46&&ty>4&&ty<24;
+  let inHorn1=(tx>18&&tx<24&&ty>0&&ty<10)||(tx>40&&tx<46&&ty>0&&ty<10);
+  let inEye=(tx>23&&tx<30&&ty>10&&ty<16)||(tx>34&&tx<41&&ty>10&&ty<16);
+  let inMouth=tx>24&&tx<40&&ty>18&&ty<22;
+  let inArm=(tx>8&&tx<18&&ty>28&&ty<48)||(tx>46&&tx<56&&ty>28&&ty<48);
+
+  let fog=Math.min(1,dist/6);
+  let flicker=0.85+Math.sin(timer*0.3)*0.15;
+
+  if(inHorn1){
+    let r=Math.floor(80*(1-fog)*flicker);
+    ctx.fillStyle=`rgb(${r},${Math.floor(r*0.15)},0)`;
+    ctx.fillRect(sx,sy,1,1);
+  } else if(inEye){
+    ctx.fillStyle=`rgba(255,200,0,${(1-fog)*flicker})`;
+    ctx.fillRect(sx,sy,1,1);
+  } else if(inMouth){
+    ctx.fillStyle=`rgba(200,0,0,${(1-fog)*0.9})`;
+    ctx.fillRect(sx,sy,1,1);
+  } else if(inHead||inBody||inArm){
+    let base=Math.floor((30+tx%8*2+ty%6)*(1-fog*0.8)*flicker);
+    let r=Math.min(255,base+40);
+    let g=Math.floor(base*0.1);
+    let b=Math.floor(base*0.05);
+    ctx.fillStyle=`rgb(${r},${g},${b})`;
+    ctx.fillRect(sx,sy,1,1);
+  }
+}
+
+// ── SHOOT ────────────────────────────────────────────────
 function shoot(){
+  if(p.ammo<=0)return;
+  p.ammo--;
+  muzzleFlash=6;
+  if(shootSound){let s=shootSound.cloneNode();s.volume=0.6;s.play();}
   enemies.forEach(e=>{
-    if(!e.alive) return;
-
-    let dx=e.x-p.x, dy=e.y-p.y;
-    let ang=Math.atan2(dy,dx);
-
-    if(Math.abs(ang-p.a)<0.2){
-      e.alive=false;
+    if(!e.alive)return;
+    let dx=e.x-p.x,dy=e.y-p.y;
+    let ang=Math.atan2(dy,dx)-p.a;
+    while(ang<-Math.PI)ang+=2*Math.PI;
+    while(ang>Math.PI)ang-=2*Math.PI;
+    if(Math.abs(ang)<0.18){
+      e.hp--;
+      spawnParticles(e.x,e.y);
+      if(e.hp<=0){
+        e.alive=false;
+        p.score+=100;
+        addKillfeed();
+        if(hitSound){let h=hitSound.cloneNode();h.play();}
+      }
     }
   });
 }
 
-// ───────── WEAPON ─────────
-let bob=0;
-function weapon(){
-  bob+=0.1;
-  let offset=Math.sin(bob)*5;
-
-  ctx.fillStyle="#444";
-  ctx.fillRect(W/2-40,H-80+offset,80,50);
-
-  ctx.fillStyle="#222";
-  ctx.fillRect(W/2-8,H-110+offset,16,30);
+function addKillfeed(){
+  let kf=document.getElementById("killfeed");
+  let el=document.createElement("div");
+  el.className="kf";
+  el.textContent="DEMON SLAIN +100";
+  kf.appendChild(el);
+  setTimeout(()=>{el.style.opacity="0";},1500);
+  setTimeout(()=>{el.remove();},3500);
 }
 
-// ───────── CROSSHAIR ─────────
-function crosshair(){
-  ctx.strokeStyle="#fff";
+// ── GUN ──────────────────────────────────────────────────
+let gunBob=0,gunBobV=0;
+function drawGun(){
+  let moving=keys["w"]||keys["s"];
+  if(moving)gunBobV+=0.18;
+  else gunBobV*=0.85;
+  gunBob+=gunBobV;
+  let bobY=Math.sin(gunBob*0.12)*6*(moving?1:0.2);
+  let bobX=Math.sin(gunBob*0.06)*3*(moving?1:0.1);
+  let flash=muzzleFlash>0;
+  let recoil=flash?-18:0;
+
+  let gx=W/2-50+bobX, gy=H-160+bobY+recoil;
+
+  // Shadow under gun
+  ctx.fillStyle="rgba(0,0,0,0.4)";
+  ctx.fillRect(gx-5,gy+120,110,8);
+
+  // Barrel
+  ctx.fillStyle="#1a0808";
+  ctx.fillRect(gx+34,gy+20,14,60);
+  ctx.fillStyle="#0f0404";
+  ctx.fillRect(gx+37,gy+10,8,30);
+
+  // Slide
+  ctx.fillStyle="#2a1010";
+  ctx.fillRect(gx+20,gy+38,50,28);
+  ctx.fillStyle="#1c0a0a";
+  ctx.fillRect(gx+22,gy+40,46,10);
+
+  // Frame / grip
+  ctx.fillStyle="#160606";
+  ctx.fillRect(gx+28,gy+64,30,55);
+  // Grip texture lines
+  ctx.fillStyle="#0a0202";
+  for(let i=0;i<5;i++)ctx.fillRect(gx+30,gy+70+i*9,26,4);
+
+  // Trigger guard
+  ctx.strokeStyle="#0d0404";
+  ctx.lineWidth=3;
   ctx.beginPath();
-  ctx.moveTo(W/2-8,H/2);
-  ctx.lineTo(W/2+8,H/2);
-  ctx.moveTo(W/2,H/2-8);
-  ctx.lineTo(W/2,H/2+8);
+  ctx.arc(gx+36,gy+80,12,0,Math.PI);
   ctx.stroke();
+
+  // Front sight
+  ctx.fillStyle="#3a1a1a";
+  ctx.fillRect(gx+36,gy+36,4,6);
+
+  // Rear sight
+  ctx.fillStyle="#3a1a1a";
+  ctx.fillRect(gx+55,gy+38,10,5);
+  ctx.fillStyle="#160606";
+  ctx.fillRect(gx+58,gy+38,4,5);
+
+  // Muzzle flash
+  if(flash){
+    let alpha=muzzleFlash/6;
+    ctx.save();
+    ctx.globalAlpha=alpha;
+    // Outer glow
+    ctx.fillStyle="#ff8800";
+    ctx.beginPath();
+    ctx.arc(gx+41,gy+12,16,0,Math.PI*2);
+    ctx.fill();
+    // Core
+    ctx.fillStyle="#ffffff";
+    ctx.beginPath();
+    ctx.arc(gx+41,gy+12,7,0,Math.PI*2);
+    ctx.fill();
+    // Light cast on scene
+    ctx.globalAlpha=alpha*0.12;
+    ctx.fillStyle="#ff6600";
+    ctx.fillRect(0,0,W,H);
+    ctx.restore();
+  }
 }
 
-// ───────── LOOP ─────────
-function loop(){
-  if(!tex.complete){
-    requestAnimationFrame(loop);
-    return;
+// ── CROSSHAIR ────────────────────────────────────────────
+function drawCrosshair(){
+  let spread=muzzleFlash>0?8:0;
+  ctx.strokeStyle="rgba(255,80,40,0.85)";
+  ctx.lineWidth=1.5;
+  ctx.beginPath();
+  ctx.moveTo(W/2-14-spread,HALF); ctx.lineTo(W/2-4-spread,HALF);
+  ctx.moveTo(W/2+4+spread,HALF);  ctx.lineTo(W/2+14+spread,HALF);
+  ctx.moveTo(W/2,HALF-14-spread); ctx.lineTo(W/2,HALF-4-spread);
+  ctx.moveTo(W/2,HALF+4+spread);  ctx.lineTo(W/2,HALF+14+spread);
+  ctx.stroke();
+  // Center dot
+  ctx.fillStyle="rgba(255,80,40,0.7)";
+  ctx.beginPath(); ctx.arc(W/2,HALF,1.5,0,Math.PI*2); ctx.fill();
+}
+
+// ── MINIMAP ──────────────────────────────────────────────
+function drawMinimap(){
+  let s=7,ox=10,oy=10;
+  ctx.globalAlpha=0.75;
+  ctx.fillStyle="rgba(0,0,0,0.6)";
+  ctx.fillRect(ox-2,oy-2,MW*s+4,MH*s+4);
+  for(let y=0;y<MH;y++){
+    for(let x=0;x<MW;x++){
+      ctx.fillStyle=map[y][x]?"#3a1010":"#160404";
+      ctx.fillRect(ox+x*s,oy+y*s,s-1,s-1);
+    }
   }
+  // Enemies
+  enemies.forEach(e=>{
+    if(!e.alive)return;
+    ctx.fillStyle="#ffcc00";
+    ctx.fillRect(ox+e.x*s-2,oy+e.y*s-2,4,4);
+  });
+  // Player
+  ctx.fillStyle="#ff4422";
+  ctx.fillRect(ox+p.x*s-2,oy+p.y*s-2,4,4);
+  ctx.strokeStyle="#ff4422"; ctx.lineWidth=1.5;
+  ctx.beginPath();
+  ctx.moveTo(ox+p.x*s,oy+p.y*s);
+  ctx.lineTo(ox+p.x*s+Math.cos(p.a)*10,oy+p.y*s+Math.sin(p.a)*10);
+  ctx.stroke();
+  ctx.globalAlpha=1;
+}
 
-  move();
-  draw();
+// ── VIGNETTE ─────────────────────────────────────────────
+function drawVignette(){
+  let g=ctx.createRadialGradient(W/2,H/2,H*0.2,W/2,H/2,H*0.75);
+  g.addColorStop(0,"rgba(0,0,0,0)");
+  g.addColorStop(1,"rgba(0,0,0,0.6)");
+  ctx.fillStyle=g;
+  ctx.fillRect(0,0,W,H);
+}
+
+// ── DAMAGE EFFECT ────────────────────────────────────────
+function drawEffects(){
+  if(p.hurt>0){
+    let alpha=p.hurt/15*0.4;
+    ctx.fillStyle=`rgba(180,0,0,${alpha})`;
+    ctx.fillRect(0,0,W,H);
+    p.hurt--;
+  }
+}
+
+// ── HUD UPDATE ───────────────────────────────────────────
+function updateHUD(){
+  document.getElementById("val-hp").textContent=Math.max(0,p.health);
+  document.getElementById("val-ammo").textContent=p.ammo;
+  document.getElementById("bar-hp").style.width=Math.max(0,p.health)+"%";
+  document.getElementById("bar-ammo").style.width=(p.ammo/20*100)+"%";
+}
+
+// ── MAIN LOOP ────────────────────────────────────────────
+function loop(){
+  updatePlayer();
+  updateEnemies();
+  drawScene();
   drawEnemies();
-  weapon();
-  crosshair();
-
+  drawVignette();
+  drawEffects();
+  drawGun();
+  drawCrosshair();
+  drawMinimap();
+  updateHUD();
   requestAnimationFrame(loop);
 }
-
 loop();
 </script>
 </body>
