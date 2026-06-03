@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Feather 3D Ultra</title>
+<style>
+body { margin:0; background:black; overflow:hidden; }
+canvas { display:block; margin:auto; }
+</style>
+</head>
+<body>
+
+<canvas id="game"></canvas>
+
+<script>
+const c = document.getElementById("game");
+const ctx = c.getContext("2d");
+
+c.width = 900;
+c.height = 450;
+
+const W = c.width;
+const H = c.height;
+const FOV = Math.PI / 3;
+
+ctx.imageSmoothingEnabled = false;
+
+// ───────── TEXTURE ─────────
+const tex = new Image();
+tex.src = "https://i.imgur.com/8bKQ7oP.png";
+
+// ───────── MAP ─────────
+const map = [
+ [1,1,1,1,1,1,1],
+ [1,0,0,0,0,0,1],
+ [1,0,1,0,1,0,1],
+ [1,0,0,0,0,0,1],
+ [1,1,1,1,1,1,1]
+];
+
+// ───────── PLAYER ─────────
+let p = {x:3,y:3,a:0};
+let enemies = [{x:5,y:2,alive:true}];
+
+let keys = {};
+
+// INPUT
+onkeydown = e => {
+  keys[e.key.toLowerCase()] = true;
+  if(e.key === " ") shoot();
+};
+onkeyup = e => keys[e.key.toLowerCase()] = false;
+
+// ───────── MOVE ─────────
+function move(){
+  if(keys["a"]) p.a -= 0.05;
+  if(keys["d"]) p.a += 0.05;
+
+  let s = 0;
+  if(keys["w"]) s = 0.08;
+  if(keys["s"]) s = -0.08;
+
+  let nx = p.x + Math.cos(p.a)*s;
+  let ny = p.y + Math.sin(p.a)*s;
+
+  if(map[Math.floor(ny)][Math.floor(nx)] === 0){
+    p.x = nx; p.y = ny;
+  }
+}
+
+// ───────── RAYCAST ─────────
+function cast(angle){
+  let x = p.x;
+  let y = p.y;
+  let d = 0;
+
+  while(d < 20){
+    x += Math.cos(angle)*0.02;
+    y += Math.sin(angle)*0.02;
+    d += 0.02;
+
+    if(map[Math.floor(y)][Math.floor(x)] === 1){
+      return {d, x, y};
+    }
+  }
+  return {d:20, x, y};
+}
+
+// ───────── DRAW ─────────
+function draw(){
+
+  // SKY
+  ctx.fillStyle="#6ab4f5";
+  ctx.fillRect(0,0,W,H/2);
+
+  // FLOOR (fade)
+  let grad = ctx.createLinearGradient(0,H/2,0,H);
+  grad.addColorStop(0,"#333");
+  grad.addColorStop(1,"#111");
+  ctx.fillStyle=grad;
+  ctx.fillRect(0,H/2,W,H/2);
+
+  for(let x=0;x<W;x++){
+    let a = p.a - FOV/2 + x/W*FOV;
+
+    let ray = cast(a);
+
+    let dist = ray.d * Math.cos(a - p.a);
+    let h = 320 / dist;
+
+    // texture X
+    let tx = Math.floor((ray.x % 1) * tex.width);
+
+    ctx.drawImage(
+      tex,
+      tx,0,1,tex.height,
+      x,
+      H/2 - h/2,
+      1,
+      h
+    );
+
+    // fog
+    let fog = Math.min(1, dist/6);
+    ctx.fillStyle=`rgba(0,0,0,${fog})`;
+    ctx.fillRect(x, H/2-h/2, 1, h);
+  }
+}
+
+// ───────── ENEMIES ─────────
+function drawEnemies(){
+  enemies.forEach(e=>{
+    if(!e.alive) return;
+
+    let dx=e.x-p.x;
+    let dy=e.y-p.y;
+
+    let dist=Math.hypot(dx,dy);
+    let ang=Math.atan2(dy,dx)-p.a;
+
+    while(ang<-Math.PI) ang+=Math.PI*2;
+    while(ang>Math.PI) ang-=Math.PI*2;
+
+    if(Math.abs(ang)>FOV/2) return;
+
+    let size=200/dist;
+    let sx=(ang+FOV/2)/FOV*W;
+
+    ctx.fillStyle="#00ffff";
+    ctx.fillRect(sx-size/2,H/2-size/2,size,size);
+
+    ctx.fillStyle="white";
+    ctx.fillRect(sx-6,H/2-10,4,4);
+    ctx.fillRect(sx+4,H/2-10,4,4);
+  });
+}
+
+// ───────── SHOOT ─────────
+function shoot(){
+  enemies.forEach(e=>{
+    if(!e.alive) return;
+
+    let dx=e.x-p.x, dy=e.y-p.y;
+    let ang=Math.atan2(dy,dx);
+
+    if(Math.abs(ang-p.a)<0.2){
+      e.alive=false;
+    }
+  });
+}
+
+// ───────── WEAPON ─────────
+let bob=0;
+function weapon(){
+  bob+=0.1;
+  let offset=Math.sin(bob)*5;
+
+  ctx.fillStyle="#444";
+  ctx.fillRect(W/2-40,H-80+offset,80,50);
+
+  ctx.fillStyle="#222";
+  ctx.fillRect(W/2-8,H-110+offset,16,30);
+}
+
+// ───────── CROSSHAIR ─────────
+function crosshair(){
+  ctx.strokeStyle="#fff";
+  ctx.beginPath();
+  ctx.moveTo(W/2-8,H/2);
+  ctx.lineTo(W/2+8,H/2);
+  ctx.moveTo(W/2,H/2-8);
+  ctx.lineTo(W/2,H/2+8);
+  ctx.stroke();
+}
+
+// ───────── LOOP ─────────
+function loop(){
+  if(!tex.complete){
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  move();
+  draw();
+  drawEnemies();
+  weapon();
+  crosshair();
+
+  requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
