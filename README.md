@@ -21,7 +21,7 @@
 
 > *Eclipse the ordinary. Build what others can't imagine.*
 
-[![▶ Play Hellgrid](https://img.shields.io/badge/▶_Play-Hellgrid-ff6b2a?style=for-the-badge&logoColor=black&labelColor=000000)](https://george-mando.github.io/Hellgrid/featherfall-village.html)
+[![▶ Play Hellgrid](https://img.shields.io/badge/▶_Play-Hellgrid-ff6b2a?style=for-the-badge&logoColor=black&labelColor=000000)](https://george-mando.github.io/Hellgrid/)
 
 **XenClipse Studios · Portfolio · Game Dev Hub**
 
@@ -38,10 +38,9 @@
 ### 🪶 Hellgrid
 > *Cozy Life Sim · In Development*
 
-🐦 Cozy bird village life sim with fishing, collecting, NPC AI, economy system, and isometric rendering.
+🐦 Explore a cartoon bird village with fishing, collectibles, NPC AI, and economy systems.
 
-▶ **Play now:**  
-https://george-mando.github.io/Hellgrid/featherfall-village.html
+▶ [**Play now →**](https://george-mando.github.io/Hellgrid/)
 
 </td>
 
@@ -50,10 +49,9 @@ https://george-mando.github.io/Hellgrid/featherfall-village.html
 ### 🥚 Birdy Blocks
 > *Puzzle Game · In Development*
 
-🐣 Egg-based puzzle game with gravity flipping and hatch animations.
+🐣 Egg-based puzzle game with gravity flip and hatch animations.
 
-▶ **Play now:**  
-https://george-mando.github.io/Hellgrid/featherfall-village.html
+▶ [**Play now →**](https://george-mando.github.io/Hellgrid/)
 
 </td>
 </tr>
@@ -68,4 +66,4 @@ git clone https://github.com/George-Mando/Hellgrid.git
 cd Hellgrid
 
 # Open directly
-start featherfall-village.html  # Windows
+start index.html  # Windows
